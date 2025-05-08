@@ -1,6 +1,7 @@
-Flask==2.0.1
-playwright==1.38.0
-yt-dlp==2023.10.13
-aiohttp==3.8.5
-tenacity==8.2.3
-gunicorn==20.1.0
+Flask==2.3.2
+yt-dlp
+aiohttp
+tenacity
+playwright
+# Required to install browser binaries
+playwright install
