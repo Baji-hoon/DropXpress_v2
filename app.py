@@ -30,7 +30,7 @@ os.makedirs(CLEANED_FOLDER, exist_ok=True)
 logs = deque(maxlen=100)
 task_status = {}  # Dictionary to track task status
 task_queue = asyncio.Queue(maxsize=100)  # Limit queue size
-MAX_WORKERS = 3  # Number of concurrent workers
+MAX_WORKERS = 1  # Reduced to 1 to minimize memory usage
 TASK_TIMEOUT = 300  # 5 minutes timeout for tasks
 cleaned_files = set()  # Track files scheduled for cleanup
 
@@ -51,11 +51,11 @@ def cleanup_file(file_path):
                 os.remove(file_path)
                 log("File cleaned up 🗑️", user_friendly=True)
             else:
-                log(f"[*] File skipped. ⏭️: {file_path}", user_friendly=False)
+                log(f"Skipped non-video/audio file: {file_path}", user_friendly=False)
         else:
-            log(f"[*] Cleanup file not found⚠️: {file_path}", user_friendly=False)
+            log(f"File not found for cleanup: {file_path}", user_friendly=False)
     except Exception as e:
-        log(f"[*] File removal error. 🚫 {file_path}: {str(e)}", user_friendly=False)
+        log(f"Error removing file {file_path}: {str(e)}", user_friendly=False)
     finally:
         cleaned_files.discard(file_path)
 
@@ -69,13 +69,13 @@ def is_valid_url(url):
 def detect_platform(url):
     url = url.lower()
     if "tiktok.com" in url or "vt.tiktok.com" in url:
-        log("[*] Detected TikTok video. 📱", user_friendly=True)
+        log("Detected TikTok video", user_friendly=True)
         return "tiktok"
     elif "instagram.com" in url:
-        log("[*] Detected Instagram video. 📸", user_friendly=True)
+        log("Detected Instagram video", user_friendly=True)
         return "instagram"
     elif "youtube.com" in url or "youtu.be" in url:
-        log("[*] Detected YouTube video. ▶️", user_friendly=True)
+        log("Detected YouTube video", user_friendly=True)
         return "youtube"
     return "unknown"
 
@@ -87,19 +87,19 @@ async def clean_with_adarsus(video_path):
             context = await browser.new_context(accept_downloads=True)
             page = await context.new_page()
 
-            log("[*] Cleaning video metadata. 🧹", user_friendly=True)
+            log("Cleaning video metadata", user_friendly=True)
             await page.goto("https://adarsus.com/en/remove-metadata-online-document-image-video/")
             await page.set_input_files("input#fileDialog", video_path)
             await page.wait_for_selector("button#removeMetadata", timeout=60000)
             await page.click("button#removeMetadata")
 
-            log("[*] Processing metadata cleanup. ⚙️", user_friendly=True)
+            log("Processing metadata cleanup", user_friendly=True)
             async with page.expect_download(timeout=120000) as download_info:
                 download = await download_info.value
             cleaned_id = str(uuid.uuid4())
             cleaned_path = os.path.join(CLEANED_FOLDER, f"{cleaned_id}.mp4")
             await download.save_as(cleaned_path)
-            log("[*] Metadata cleanup completed. ✅", user_friendly=True)
+            log("Metadata cleanup completed", user_friendly=True)
 
             await browser.close()
             return True, cleaned_id
@@ -144,16 +144,16 @@ def download_with_ytdlp(url, platform, quality):
         })
 
     try:
-        log(f"[*]Downloading {platform.capitalize()} video📩", user_friendly=True)
+        log(f"Downloading {platform.capitalize()} video", user_friendly=True)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
-        log("[*]Download completed🏁", user_friendly=True)
+        log("Download completed", user_friendly=True)
         return True, raw_path
     except yt_dlp.utils.DownloadError as e:
-        log(f"Failed to download😞: {str(e)}", user_friendly=True)
+        log(f"Failed to download video: {str(e)}", user_friendly=True)
         return False, str(e)
     except Exception as e:
-        log(f"Error downloading🚫: {str(e)}", user_friendly=True)
+        log(f"Error downloading video: {str(e)}", user_friendly=True)
         return False, str(e)
 
 async def process_video(url, remove_metadata, quality, task_id):
@@ -177,7 +177,7 @@ async def process_video(url, remove_metadata, quality, task_id):
                 ext = "mp4" if quality != "audio" else "m4a"
                 cleaned_path = os.path.join(CLEANED_FOLDER, f"{final_id}.{ext}")
                 os.rename(raw_path_or_error, cleaned_path)
-                log("[*] Video saved, metadata not cleaned. 💾🧹", user_friendly=True)
+                log("Video saved without metadata cleanup", user_friendly=True)
                 success, result = True, final_id
         else:
             raise Exception("Unsupported platform")
@@ -188,26 +188,26 @@ async def process_video(url, remove_metadata, quality, task_id):
             task_status[task_id] = {"ready": False, "error": result, "queued": False, "status": "failed"}
     except Exception as e:
         task_status[task_id] = {"ready": False, "error": str(e), "queued": False, "status": "failed"}
-        log(f"[*] Video processing error. ⚠️: {str(e)}", user_friendly=True)
+        log(f"Error processing video: {str(e)}", user_friendly=True)
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def download_and_clean_tiktok(url, quality):
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
             context = await browser.new_context(accept_downloads=True)
             page = await context.new_page()
 
-            log("[*] Connecting to TikTok service. 🔗", user_friendly=True)
+            log("Connecting to TikTok download service", user_friendly=True)
             await page.goto("https://snaptik.app/en")
             await page.fill("input[name='url']", url)
             await page.click("button[type='submit']")
 
-            log("[*] Preparing TikTok video. ⏳", user_friendly=True)
+            log("Preparing TikTok video", user_friendly=True)
             await page.wait_for_selector("a[href*='snaptik.app/file']", timeout=60000)
 
             if quality == "audio":
-                log("[*] No TikTok audio, downloading video. 🔇", user_friendly=True)
+                log("TikTok audio not supported, downloading video", user_friendly=True)
                 selector = "a[href*='snaptik.app/file']"
             else:
                 selector = "a[href*='snaptik.app/file']"
@@ -216,15 +216,15 @@ async def download_and_clean_tiktok(url, quality):
             if not download_link:
                 raise Exception("Download link not found")
 
-            log("[*] TikTok video found. 🔗", user_friendly=True)
+            log("TikTok video link found", user_friendly=True)
 
-            log("[*] Downloading TikTok video. 📥", user_friendly=True)
+            log("Downloading TikTok video", user_friendly=True)
             async with aiohttp.ClientSession() as session:
                 async with session.get(download_link) as response:
                     raw_path = os.path.join(RAW_FOLDER, "tiktok_raw.mp4")
                     with open(raw_path, "wb") as f:
                         f.write(await response.read())
-            log("[*] TikTok video downloaded. ✅", user_friendly=True)
+            log("TikTok video downloaded", user_friendly=True)
 
             await browser.close()
 
@@ -239,30 +239,30 @@ async def download_and_clean_tiktok(url, quality):
 
             return await clean_with_adarsus(raw_path)
     except PlaywrightTimeoutError:
-        log("[*] TikTok video fetch timed out. ⏳🚫", user_friendly=True)
-        return False, "[*] TikTok download link timed out. ⏳"
+        log("Timeout fetching TikTok video", user_friendly=True)
+        return False, "Timeout while fetching TikTok download link"
     except Exception as e:
-        log(f"[*] TikTok video download error. ❌: {str(e)}", user_friendly=True)
+        log(f"Error downloading TikTok video: {str(e)}", user_friendly=True)
         return False, str(e)
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=4, max=10))
 async def download_and_skip_clean_tiktok(url, quality):
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
             context = await browser.new_context(accept_downloads=True)
             page = await context.new_page()
 
-            log("[*] Connecting to TikTok service. 🔗", user_friendly=True)
+            log("Connecting to TikTok download service", user_friendly=True)
             await page.goto("https://snaptik.app/en")
             await page.fill("input[name='url']", url)
             await page.click("button[type='submit']")
 
-            log("[*] Preparing TikTok video. ⏳", user_friendly=True)
+            log("Preparing TikTok video", user_friendly=True)
             await page.wait_for_selector("a[href*='snaptik.app/file']", timeout=60000)
 
             if quality == "audio":
-                log("[*] No TikTok audio, downloading video. 🔇", user_friendly=True)
+                log("TikTok audio not supported, downloading video", user_friendly=True)
                 selector = "a[href*='snaptik.app/file']"
             else:
                 selector = "a[href*='snaptik.app/file']"
@@ -311,6 +311,7 @@ async def worker(worker_id):
         try:
             task = await asyncio.wait_for(task_queue.get(), timeout=10)
             log(f"Worker {worker_id} processing task {task['task_id']}", user_friendly=False)
+            await asyncio.sleep(1)  # Add delay to prevent memory spikes
             await process_video(task["url"], task["remove_metadata"], task["quality"], task["task_id"])
             task_queue.task_done()
             log(f"Worker {worker_id} completed task {task['task_id']}", user_friendly=False)
